@@ -8,6 +8,8 @@ from src.models.telemetry import Telemetry
 from src.utils.security import hash_password
 def seed():
  Base.metadata.create_all(engine)
+ from src.config.schema import upgrade
+ upgrade()
  with Session() as s:
   for role in ('admin','operator','viewer'):
    if not s.query(User).filter_by(email=role+'@index.local').first():s.add(User(email=role+'@index.local',role=role,password=hash_password('Trial2026!')))

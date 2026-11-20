@@ -7,6 +7,20 @@
 
 模块：工作负载录入/编辑、候选列序设计、后台试验队列、真实结果对比/JSON 导出；管理员另有审计。核心实体 workloads / candidates / experiments，样本表 telemetry。
 
+## 统计重采样对照
+新增「重采样对照」试验类型，专门回答一种现场事故：读者仍走索引，但遥测读数集中到少数设备后，负载却开始扫全表。
+
+- 在按试验 ID 命名的独立副本表 `telemetry_cmp_<id>` 上执行，不触碰 `telemetry` 与索引试跑；试验成功后删除副本，失败/中断时保留供核验。
+- 复制固定 5,000 行样本 → 建立候选索引并显式 `ANALYZE` 建立统计基线 → 写入一批确定性偏斜遥测。
+- 「重新采样前」先执行 `FLUSH TABLE` 重载磁盘上的上一次采样统计：新增遥测此时已经可查，但优化器仍按旧统计估算。
+- 显式 `ANALYZE` 重采样后，用同一查询、同一索引、同一批样本再测一遍；两臂都采集 EXPLAIN、估计扫描行、Handler 实查读取行、返回行与中位耗时。
+- 副本表 `STATS_AUTO_RECALC=0`，并要求全局 `innodb_stats_on_metadata=0`；两臂前后各读一次统计指纹并比对，确认后台自动采样没有混进对照。
+- 结论门禁：两侧查询结果 SHA-256 对账一致、索引结构一致、重采样前后统计确实变化、重采样前已能查到新增遥测，才给出「计划改变 / 计划未变」的结论，否则标记为不可比较并列出原因。
+- 中断续跑：worker 崩溃或进程重启后，任务停在「执行中」。页面可点「续跑」，worker 会先核验留存副本、样本指纹与「重新采样前」结果；核验通过则续跑，核验不过（例如重新采样已生效但成绩尚未保存）就丢弃前一份证据、整对重测，并在证据里记录被作废的尝试。
+- 不可变快照记录候选列、负载条件、偏斜行数与聚焦传感器；样本由固定公式生成，同样输入必得同样一批行。
+
+该对照需要数据库账号拥有 `FLUSH_TABLES` 权限。`docker-compose.yml` 通过 `backend/scripts/mysql-init.sql` 在数据卷首次初始化时授予；已有数据卷若不重建，启动日志会提示缺少该权限，对照试验会以明确错误失败而不是给出错误结论。
+
 ## 快速启动
 ```sh
 cp .env.example .env
@@ -32,6 +46,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 6. 09:25 查看 EXPLAIN、前缀评分、结果 SHA-256、写入探针。
 7. 09:30 导出 `trial-<id>.json`，viewer 登录只读复核。
 8. 10:00 admin 查看审计记录并检查执行完成事件。
+9. 11:00 用「重采样对照」复核事故：选 `传感器17时间窗` 候选，偏斜 1,500 行聚焦传感器 17，提交后对比重新采样前后的计划、估计与实查行数。
 
 种子含三账号、三负载、三候选与 5,000 遥测行。固定公式生成，不依赖随机数。seed 根据自然键/id补缺，不覆盖用户编辑。范围错误/非法列/重复名称有错误响应，空结果仍可正常比较。
 
@@ -41,7 +56,7 @@ Python 对索引从左到右分析，匹配相等列每列 +40，首个时间范
 ## 技术与目录
 Python3.11 / FastAPI / SQLAlchemy / PyMySQL / Redis；MySQL8.0；原生 HTML CSS ES modules；nginx1.27。恰好五容器 frontend/backend/worker/db/redis，均有健康探针。数据库、Redis、应用产物各用命名卷。
 
-`backend/src` 按 models/schemas/services/controllers/routes/middlewares/config/constants/utils 分层；`backend/scripts/seed_demo.py`；`backend/migrations` 记录元数据建表版本。`frontend/src` 按 api/stores/pages/components/common/hooks/router/types/constants/utils 分层。截图、测试脚本及测试报告在批次根目录 `test-artifacts/gb-4102`，不放源码。
+`backend/src` 按 models/schemas/services/controllers/routes/middlewares/config/constants/utils 分层；`backend/scripts/seed_demo.py`；`backend/migrations` 记录元数据建表版本。`frontend/src` 按 api/stores/pages/components/common/hooks/router/types/constants/utils 分层。截图、测试脚本及测试报告在批次根目录 `test-artifacts/gb-4102`，不放源码；对照试验的回归脚本为 `python3 test-artifacts/gb-4102/test_comparison.py`（需后端环境变量与真实 MySQL）。
 
 共享枚举：角色和状态在 `backend/src/constants/enums.py` 与 `frontend/src/constants/enums.js`；服务/权限与前端状态组件使用一致枚举。前端共享 table/status/feedback；hooks forms/poll。双字体来自 Google Fonts（网络不可用时回退 sans-serif/monospace）。赭红工业试验纸视觉，支持桌面/平板/手机。
 

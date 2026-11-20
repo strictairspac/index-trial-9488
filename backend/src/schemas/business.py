@@ -1,5 +1,6 @@
 from pydantic import BaseModel,Field,model_validator
 from datetime import datetime
+from typing import Literal
 from src.constants.enums import COLUMNS
 class Login(BaseModel):
  email:str;password:str
@@ -26,6 +27,22 @@ class CandidateInput(BaseModel):
  def columns_valid(self):
   if len(set(self.columns))!=len(self.columns) or any(x not in COLUMNS for x in self.columns):raise ValueError('索引列必须唯一且来自白名单')
   return self
+class ComparisonInput(BaseModel):
+ skew_rows:int=Field(default=2000,ge=1,le=20000)
+ focus_sensor_ids:list[int]=Field(default_factory=list,max_length=5)
+ @model_validator(mode='after')
+ def focus_valid(self):
+  if len(set(self.focus_sensor_ids))!=len(self.focus_sensor_ids):raise ValueError('聚焦传感器编号必须唯一')
+  if any(x<1 or x>1000 for x in self.focus_sensor_ids):raise ValueError('聚焦传感器编号必须在 1..1000 之间')
+  return self
 class ExperimentInput(BaseModel):
  name:str=Field(min_length=2,max_length=120)
  candidate_id:int
+ kind:Literal['index','comparison']='index'
+ comparison:ComparisonInput|None=None
+ @model_validator(mode='after')
+ def kind_valid(self):
+  if self.kind=='comparison':
+   if self.comparison is None:self.comparison=ComparisonInput()
+  else:self.comparison=None
+  return self

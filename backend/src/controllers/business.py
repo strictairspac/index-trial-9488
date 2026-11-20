@@ -5,4 +5,6 @@ def save_workload(data,user,item_id=None):
 def save_candidate(data,user,item_id=None):
  row=candidates.save(data,item_id);log(user.email,'candidate.save',row['name']);return row
 def start_experiment(data,user):
- row=experiments.create(data);log(user.email,'experiment.queue',row['name']);return row
+ row=experiments.create(data);log(user.email,'experiment.queue',f'{row["name"]}:{row["kind"]}');return row
+def resume_experiment(item_id,user):
+ row=experiments.resume(item_id);log(user.email,'experiment.resume',f'{row["name"]}:attempt{row["attempt"]}');return row
